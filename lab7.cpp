@@ -639,53 +639,85 @@ void Scheduler::FB2i()
 
 void Scheduler::AGE(int quantum)
 {
-    // Aging Scheduling
-    vector <Process>readyList;
-    for(int time =0;time<maxSeconds;time++){
-        for(int i=0;i<numberOfProcesses;i++){
-            if(processes[i].arrivalTime==time){ //process becoms eligible
-                readyList.push_back(processes[i]); //add to ready list
+    // Aging Scheduling (Xinu-style)
+    vector<Process> readyList;
+    
+    // Reset state
+    for(int i = 0; i < numberOfProcesses; i++) {
+        processes[i].remainingTime = processes[i].serveTime;
+        processes[i].finishTime = 0;
+        processes[i].turnAroundTime = 0;
+        processes[i].NormTurnTime = 0.0f;
+        processes[i].q = 0;
+    }
+    processorBusy = false;
+
+    for(int time = 0; time < maxSeconds; time++) {
+        // 1. Check ready processes
+        for(int i = 0; i < numberOfProcesses; i++) {
+            if(processes[i].arrivalTime == time) {
+                readyList.push_back(processes[i]);
             }
-        }
-        if(!processorBusy && !readyList.empty()){
-            int maxPriority=-1;
-            int selectedIndex=-1;
-            for(int k=0;k<readyList.size();k++){ //iterate through ready list to find highest priority process
-                if(readyList[k].currentPriority>maxPriority){
-                    maxPriority=readyList[k].currentPriority;
-                    selectedIndex=k;
-                }
-            }
-            if(selectedIndex!=-1){ // move selected process to current process
-                currentProcess=readyList[selectedIndex];
-                readyList.erase(readyList.begin()+selectedIndex); //remove from ready list
-                currentProcess.q=0; //reset quantum counter
-                processorBusy=true;
-            }
-        }
-        for(int k=0;k<readyList.size();k++){
-            int waitingProcessId=readyList[k].id; //get the id of the process waiting in ready list
-            *(processesPrintingArray + waitingProcessId * maxSeconds + time)='.';
         }
 
-        if(processorBusy){
-            *(processesPrintingArray + currentProcess.id * maxSeconds + time)='*';  
-            currentProcess.remainingTime--;
-            currentProcess.q++; //increment quantum counter
-            if(currentProcess.remainingTime==0){
-                processorBusy=false;
-                currentProcess.finishTime=time+1; //process finishes at the end of this time unit
-                currentProcess.turnAroundTime=currentProcess.finishTime - currentProcess.arrivalTime;
-                currentProcess.NormTurnTime=currentProcess.turnAroundTime / (float)currentProcess.serveTime;
-                processes[currentProcess.id]=currentProcess; //update the process in the process list
+        // 2. Check if quantum expired
+        if(processorBusy && currentProcess.q >= quantum) {
+            
+            // Reset current process priority to base
+            currentProcess.currentPriority = currentProcess.priority;
+            
+            // Increase priority of all ready processes by 1
+            for(int k = 0; k < readyList.size(); k++) {
+                readyList[k].currentPriority += 1;
             }
-            else if(currentProcess.q==quantum){ //quantum expired
-                processorBusy=false;
-                currentProcess.currentPriority=currentProcess.priority; //reset priority to base priority
-                for(int k=0;k<readyList.size();k++){
-                    readyList[k].currentPriority+=1; //increase priority of waiting processes
+            
+            // Put current process back in ready list
+            readyList.push_back(currentProcess);
+            processorBusy = false;
+        }
+
+         // 3. Select highest priority process
+        if(!processorBusy && !readyList.empty()) {
+            int maxPriority = -1;
+            int selectedIndex = -1;
+            
+            // Find highest priority process
+            for(int k = 0; k < readyList.size(); k++) {
+                if(readyList[k].currentPriority > maxPriority) {
+                    maxPriority = readyList[k].currentPriority;
+                    selectedIndex = k;
                 }
-                readyList.push_back(currentProcess); //push back to ready list
+            }
+            
+            if(selectedIndex != -1) {
+                currentProcess = readyList[selectedIndex];
+                readyList.erase(readyList.begin() + selectedIndex);
+                currentProcess.q = 0; // Reset quantum counter
+                processorBusy = true;
+            }
+        }
+
+        // 4. Mark waiting processes
+        for(int k = 0; k < readyList.size(); k++) {
+            *(processesPrintingArray + readyList[k].id * maxSeconds + time) = '.';
+        }
+
+        // 5. Execution
+        if(processorBusy) {
+            *(processesPrintingArray + currentProcess.id * maxSeconds + time) = '*';
+            currentProcess.remainingTime--;
+            currentProcess.q++;
+            
+            // Update main process array
+            processes[currentProcess.id].remainingTime = currentProcess.remainingTime;
+
+            // Check if process finished
+            if(currentProcess.remainingTime == 0) {
+                currentProcess.finishTime = time + 1;
+                currentProcess.turnAroundTime = currentProcess.finishTime - currentProcess.arrivalTime;
+                currentProcess.NormTurnTime = currentProcess.turnAroundTime / (float)currentProcess.serveTime;
+                processes[currentProcess.id] = currentProcess;
+                processorBusy = false;
             }
         }
     }
