@@ -637,69 +637,56 @@ void Scheduler::FB2i()
     }
 }
 
-void Scheduler::AGE(int quantum)
-{
-    // Aging Scheduling (Xinu-style)
+void Scheduler::AGE(int quantum) {
+    // Aging Scheduling
     vector<Process> readyList;
     
-    // Reset state
+    // 1. Reset State
     for(int i = 0; i < numberOfProcesses; i++) {
         processes[i].remainingTime = processes[i].serveTime;
         processes[i].finishTime = 0;
         processes[i].turnAroundTime = 0;
         processes[i].NormTurnTime = 0.0f;
         processes[i].q = 0;
+        
+        processes[i].currentPriority = processes[i].priority; 
     }
     processorBusy = false;
 
     for(int time = 0; time < maxSeconds; time++) {
-        // 1. Check ready processes
+        
+        // 2. Process Arrival
         for(int i = 0; i < numberOfProcesses; i++) {
             if(processes[i].arrivalTime == time) {
                 readyList.push_back(processes[i]);
             }
         }
 
-        // 2. Check if quantum expired
-        if(processorBusy && currentProcess.q >= quantum) {
-            
-            // Reset current process priority to base
-            currentProcess.currentPriority = currentProcess.priority;
-            
-            // Increase priority of all ready processes by 1
-            for(int k = 0; k < readyList.size(); k++) {
-                readyList[k].currentPriority += 1;
-            }
-            
-            // Put current process back in ready list
-            readyList.push_back(currentProcess);
-            processorBusy = false;
-        }
-
-         // 3. Select highest priority process
+        // 3. Select Highest Priority Process
         if(!processorBusy && !readyList.empty()) {
             int maxPriority = -1;
             int selectedIndex = -1;
-            
-            // Find highest priority process
+
+            // Find strictly highest priority
             for(int k = 0; k < readyList.size(); k++) {
                 if(readyList[k].currentPriority > maxPriority) {
                     maxPriority = readyList[k].currentPriority;
                     selectedIndex = k;
                 }
             }
-            
+
             if(selectedIndex != -1) {
                 currentProcess = readyList[selectedIndex];
                 readyList.erase(readyList.begin() + selectedIndex);
-                currentProcess.q = 0; // Reset quantum counter
+                currentProcess.q = 0;
                 processorBusy = true;
             }
         }
 
-        // 4. Mark waiting processes
+        // 4. Mark Waiting Processes
         for(int k = 0; k < readyList.size(); k++) {
-            *(processesPrintingArray + readyList[k].id * maxSeconds + time) = '.';
+            int waitingProcessId = readyList[k].id;
+            *(processesPrintingArray + waitingProcessId * maxSeconds + time) = '.';
         }
 
         // 5. Execution
@@ -707,17 +694,28 @@ void Scheduler::AGE(int quantum)
             *(processesPrintingArray + currentProcess.id * maxSeconds + time) = '*';
             currentProcess.remainingTime--;
             currentProcess.q++;
-            
-            // Update main process array
-            processes[currentProcess.id].remainingTime = currentProcess.remainingTime;
 
-            // Check if process finished
+            // Aging
+            for(int k = 0; k < readyList.size(); k++) {
+                readyList[k].currentPriority++;
+            }
+
+            // Check if Process Finished
             if(currentProcess.remainingTime == 0) {
+                processorBusy = false;
                 currentProcess.finishTime = time + 1;
                 currentProcess.turnAroundTime = currentProcess.finishTime - currentProcess.arrivalTime;
                 currentProcess.NormTurnTime = currentProcess.turnAroundTime / (float)currentProcess.serveTime;
+                
+                // Update master list
                 processes[currentProcess.id] = currentProcess;
+            }
+            // Check if Quantum Expired
+            else if(currentProcess.q == quantum) {
                 processorBusy = false;
+                // Reset priority to base
+                currentProcess.currentPriority = currentProcess.priority;
+                readyList.push_back(currentProcess);
             }
         }
     }
