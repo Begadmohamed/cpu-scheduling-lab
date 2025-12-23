@@ -423,7 +423,6 @@ void Scheduler::HRRN()
 
 void Scheduler::FB1()
 {
-    // Fresh Start: 2 Levels (0=High, 1=Low)
     FBQueues.clear();
     FBQueues.resize(2);
 
@@ -451,24 +450,20 @@ void Scheduler::FB1()
         // 2. YIELD & MAINTENANCE
         if(processorBusy) {
             
-            // FRIEND'S RULE: If I am alone, don't demote.
-            // (Check if both queues are empty)
+            
             bool amIAlone = FBQueues[0].empty() && FBQueues[1].empty();
             
             int nextLevel = currentProcess.FBLevel;
             
-            // Only increase level if NOT alone
             if(!amIAlone) {
                 nextLevel++; 
             }
             
-            // Cap at Level 1 (Never go to 2)
             if(nextLevel > 1) nextLevel = 1; 
             
             currentProcess.FBLevel = nextLevel;
 
-            // Placement: ALWAYS go to the BACK of the queue.
-            // (No special "Front" logic for preemption).
+            
             FBQueues[nextLevel].push(currentProcess);
             
             processorBusy = false;
