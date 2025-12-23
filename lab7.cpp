@@ -4,6 +4,7 @@
 #include <map>
 #include <queue>
 #include <math.h>
+#include <deque>
 
 using namespace std;
 
@@ -421,11 +422,13 @@ void Scheduler::HRRN()
     }
 }
 
+
+
 void Scheduler::FB1()
 {
-    FBQueues.clear();
-    FBQueues.resize(2);
-
+    // Feedback with quantum = 1 Scheduling
+    vector<deque<Process>> MQ; 
+    
     // Reset State
     for(int i = 0; i < numberOfProcesses; i++) {
         processes[i].remainingTime = processes[i].serveTime;
@@ -433,79 +436,83 @@ void Scheduler::FB1()
         processes[i].turnAroundTime = 0;
         processes[i].NormTurnTime = 0.0f;
         processes[i].FBLevel = 0;
+        processes[i].q = 0;
     }
-    
     processorBusy = false;
 
     for(int time = 0; time < maxSeconds; time++) {
-        
-        // 1. ARRIVALS
+        // 1. check ready processes
         for(int i = 0; i < numberOfProcesses; i++) {
             if(processes[i].arrivalTime == time) {
                 processes[i].FBLevel = 0;
-                FBQueues[0].push(processes[i]);
+                if(MQ.size() == 0) MQ.resize(1);
+                MQ[0].push_back(processes[i]);
             }
         }
 
-        // 2. YIELD & MAINTENANCE
+        // 2. Check if quantum expired
         if(processorBusy) {
+            // Process has run for 1 time unit, needs to yield
+            int currentLvl = currentProcess.FBLevel;
             
-            
-            bool amIAlone = FBQueues[0].empty() && FBQueues[1].empty();
-            
-            int nextLevel = currentProcess.FBLevel;
-            
-            if(!amIAlone) {
-                nextLevel++; 
+            // Check if anyone else is waiting in ANY queue
+            bool anyoneWaiting = false;
+            for(int l = 0; l < MQ.size(); l++) {
+                if(!MQ[l].empty()) {
+                    anyoneWaiting = true;
+                    break;
+                }
             }
-            
-            if(nextLevel > 1) nextLevel = 1; 
-            
-            currentProcess.FBLevel = nextLevel;
 
-            
-            FBQueues[nextLevel].push(currentProcess);
+            if(anyoneWaiting) {
+                // Someone is waiting - demote to next level
+                currentProcess.FBLevel = currentLvl + 1;
+                int newLvl = currentProcess.FBLevel;
+                if(newLvl >= MQ.size()) MQ.resize(newLvl + 1);
+                MQ[newLvl].push_back(currentProcess);
+            } else {
+                // No one waiting - stay at same level
+                if(currentLvl >= MQ.size()) MQ.resize(currentLvl + 1);
+                MQ[currentLvl].push_back(currentProcess);
+            }
             
             processorBusy = false;
         }
 
-        // 3. SELECTION
+        // 3. Select Next Process
         if(!processorBusy) {
-            if(!FBQueues[0].empty()) {
-                currentProcess = FBQueues[0].front();
-                FBQueues[0].pop();
-                currentProcess = processes[currentProcess.id]; 
-                processorBusy = true;
-            } else if(!FBQueues[1].empty()) {
-                currentProcess = FBQueues[1].front();
-                FBQueues[1].pop();
-                currentProcess = processes[currentProcess.id]; 
-                processorBusy = true;
+            for(int l = 0; l < MQ.size(); l++) {
+                if(!MQ[l].empty()) {
+                    currentProcess = MQ[l].front();
+                    MQ[l].pop_front();
+                    currentProcess.remainingTime = processes[currentProcess.id].remainingTime;
+                    processorBusy = true;
+                    break;
+                }
             }
         }
 
-        // 4. MARK DOTS
-        for(int level = 0; level < 2; level++) {
-            queue<Process> temp = FBQueues[level];
-            while(!temp.empty()) {
-                int pid = temp.front().id;
-                *(processesPrintingArray + pid * maxSeconds + time) = '.';
-                temp.pop();
+        // 4. Mark waiting processes
+        for(int l = 0; l < MQ.size(); l++) {
+            for(auto &p : MQ[l]) {
+                *(processesPrintingArray + p.id * maxSeconds + time) = '.';
             }
         }
 
-        // 5. EXECUTION
+        // 5. execution 
         if(processorBusy) {
             *(processesPrintingArray + currentProcess.id * maxSeconds + time) = '*';
             currentProcess.remainingTime--;
-            processes[currentProcess.id] = currentProcess;
+            // Update the main process array
+            processes[currentProcess.id].remainingTime = currentProcess.remainingTime;
 
+            // Check if process finished
             if(currentProcess.remainingTime == 0) {
                 currentProcess.finishTime = time + 1;
                 currentProcess.turnAroundTime = currentProcess.finishTime - currentProcess.arrivalTime;
                 currentProcess.NormTurnTime = currentProcess.turnAroundTime / (float)currentProcess.serveTime;
                 processes[currentProcess.id] = currentProcess;
-                processorBusy = false; 
+                processorBusy = false;  // Process done, don't yield it
             }
         }
     }
@@ -513,67 +520,103 @@ void Scheduler::FB1()
 
 void Scheduler::FB2i()
 {
-    // Feedback with Increasing Quantum 2^i Scheduling
-    for(int time=0; time<maxSeconds; time++){
-        for(int i=0;i<numberOfProcesses;i++){
-            if(processes[i].arrivalTime==time){ //process becoms eligible
-                if(FBQueues.size()==0){
-                    FBQueues.push_back(queue<Process>()); //create first queue if it doesn't exist
+    // Feedback with Increasing Quantum 2^i (NO PREEMPTION)
+    vector<deque<Process>> MQ;
+    
+    // Reset State
+    for(int i = 0; i < numberOfProcesses; i++) {
+        processes[i].remainingTime = processes[i].serveTime;
+        processes[i].finishTime = 0;
+        processes[i].turnAroundTime = 0;
+        processes[i].NormTurnTime = 0.0f;
+        processes[i].FBLevel = 0;
+        processes[i].q = 0;
+    }
+    processorBusy = false;
+
+    for(int time = 0; time < maxSeconds; time++) {
+        // 1. Check ready processes
+        for(int i = 0; i < numberOfProcesses; i++) {
+            if(processes[i].arrivalTime == time) {
+                processes[i].FBLevel = 0;
+                if(MQ.size() == 0) MQ.resize(1);
+                MQ[0].push_back(processes[i]);
+            }
+        }
+
+        // 2. Check if current process quantum expired
+        if(processorBusy) {
+            int currentLvl = currentProcess.FBLevel;
+            int quantum = (int)pow(2, currentLvl); // quantum = 2^level
+            
+            if(currentProcess.q >= quantum) {
+                // Quantum expired - check if anyone is waiting
+                bool anyoneWaiting = false;
+                for(int l = 0; l < MQ.size(); l++) {
+                    if(!MQ[l].empty()) {
+                        anyoneWaiting = true;
+                        break;
+                    }
                 }
-                FBQueues[0].push(processes[i]); //new process goes to highest priority queue
+
+                if(anyoneWaiting) {
+                    // Someone is waiting - demote to next level
+                    currentProcess.FBLevel = currentLvl + 1;
+                    currentProcess.q = 0; // Reset quantum counter
+                    int newLvl = currentProcess.FBLevel;
+                    if(newLvl >= MQ.size()) MQ.resize(newLvl + 1);
+                    MQ[newLvl].push_back(currentProcess);
+                } else {
+                    // No one waiting - stay at same level
+                    currentProcess.q = 0; // Reset quantum counter
+                    if(currentLvl >= MQ.size()) MQ.resize(currentLvl + 1);
+                    MQ[currentLvl].push_back(currentProcess);
+                }
+                
+                processorBusy = false;
             }
         }
-        if(processorBusy){ //prempeetion check
-            for(int level=0;level<currentProcess.FBLevel;level++){
-            if(!FBQueues[level].empty()){ // if there is a process in a higher priority queue
-                FBQueues[currentProcess.FBLevel].push(currentProcess); //push back current process to its queue
-                processorBusy=false;
-                break;
-            }
-          }
-        }
-        if(!processorBusy){
-            for(int level=0;level<FBQueues.size();level++){
-                if(!FBQueues[level].empty()){
-                    currentProcess=FBQueues[level].front();
-                    FBQueues[level].pop();
-                    processorBusy=true;
-                    currentProcess.q=0; //reset quantum counter
+
+        // 3. Select next process
+        if(!processorBusy) {
+            for(int l = 0; l < MQ.size(); l++) {
+                if(!MQ[l].empty()) {
+                    currentProcess = MQ[l].front();
+                    MQ[l].pop_front();
+                    // Only sync remainingTime, keep FBLevel and q from queue
+                    currentProcess.remainingTime = processes[currentProcess.id].remainingTime;
+                    processorBusy = true;
                     break;
                 }
             }
         }
-        for(int level=0;level<FBQueues.size();level++){
-                    queue<Process> tempQueue=FBQueues[level];
-                    while(!tempQueue.empty()){
-                        int waitingProcessId=tempQueue.front().id; //get the id of the process waiting in ready queue
-                        *(processesPrintingArray + waitingProcessId * maxSeconds + time)='.';
-                        tempQueue.pop();
-                    }
-                }
-        if(processorBusy){
-            *(processesPrintingArray + currentProcess.id * maxSeconds + time)='*';
-             currentProcess.remainingTime--;
-            currentProcess.q++; //increment quantum counter
-            int quantum=(int)pow(2, currentProcess.FBLevel); //quantum is 2^level
-            if(currentProcess.remainingTime==0){
-                processorBusy=false;
-                currentProcess.finishTime=time+1; //process finishes at the end of this time unit
-                currentProcess.turnAroundTime=currentProcess.finishTime - currentProcess.arrivalTime;
-                currentProcess.NormTurnTime=currentProcess.turnAroundTime / (float)currentProcess.serveTime;
-                processes[currentProcess.id]=currentProcess; //update the process in the process list
+
+        // 4. Mark waiting processes
+        for(int l = 0; l < MQ.size(); l++) {
+            for(auto &p : MQ[l]) {
+                *(processesPrintingArray + p.id * maxSeconds + time) = '.';
             }
-            else if(currentProcess.q==quantum){ //quantum expired
-                processorBusy=false;
-                int nextLevel=currentProcess.FBLevel + 1;
-                currentProcess.FBLevel=nextLevel;
-                if(nextLevel>=FBQueues.size()){
-                    FBQueues.push_back(queue<Process>()); //create new lower priority queue if it doesn't exist
-                }
-                FBQueues[nextLevel].push(currentProcess);
+        }
+
+        // 5. Execution
+        if(processorBusy) {
+            *(processesPrintingArray + currentProcess.id * maxSeconds + time) = '*';
+            currentProcess.remainingTime--;
+            currentProcess.q++; // Increment quantum counter
+            
+            // Update the main process array
+            processes[currentProcess.id].remainingTime = currentProcess.remainingTime;
+
+            // Check if process finished
+            if(currentProcess.remainingTime == 0) {
+                currentProcess.finishTime = time + 1;
+                currentProcess.turnAroundTime = currentProcess.finishTime - currentProcess.arrivalTime;
+                currentProcess.NormTurnTime = currentProcess.turnAroundTime / (float)currentProcess.serveTime;
+                processes[currentProcess.id] = currentProcess;
+                processorBusy = false;  // Process done, don't yield it
             }
+        }
     }
-  }
 }
 
 void Scheduler::AGE(int quantum)
